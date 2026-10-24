@@ -23,8 +23,10 @@
   const ATTR = "data-gfx-style";
   const STORE = "gfx-ui-style";
   const CACHE = "gfx-ui-style-cache";
-  // Given by Marinara's full-page wrapper; without it (pasted by hand) server storage is skipped.
-  const EXT_ID = typeof extension !== "undefined" && extension && extension.id ? String(extension.id) : "";
+  // Modern full-page extensions receive `marinara`; keep the older `extension.id` fallback for old engines.
+  const MARINARA = typeof marinara !== "undefined" && marinara ? marinara : null;
+  const EXT_ID = MARINARA?.extensionId ? String(MARINARA.extensionId)
+    : typeof extension !== "undefined" && extension && extension.id ? String(extension.id) : "";
   const FONT_FAMILIES = ["Jua", "Gowun Dodum"];
   const STYLES = [["trickcal", "말랑", "트릭컬풍 · 색은 직접 고르기"]];
 
@@ -115,8 +117,8 @@
     const homeScene = {};
     for (const [run, raw] of Object.entries(p.homeScene && typeof p.homeScene === "object" ? p.homeScene : {})) {
       if (!raw || typeof raw !== "object") continue;
-      const backY = num(raw.backY, 42, 92, 66);
-      const frontY = num(raw.frontY, backY + 8, 110, 106);
+      const backY = num(raw.backY, 42, 88, 66);
+      const frontY = num(raw.frontY, backY + 8, 96, 94);
       const backL = num(raw.backL, 0, 94, 22), backR = num(raw.backR, backL + 6, 100, 78);
       const frontL = num(raw.frontL, 0, 94, 3), frontR = num(raw.frontR, frontL + 6, 100, 97);
       homeScene[run] = {
@@ -139,8 +141,12 @@
   /* ═════════════ Server storage (this extension's own) ═════════════ */
   const storeUrl = EXT_ID ? "/api/personal-extensions/" + encodeURIComponent(EXT_ID) + "/storage" : "";
   async function storeGet() {
-    if (!storeUrl) return {};
     try {
+      if (MARINARA?.storage?.get) {
+        const value = await MARINARA.storage.get();
+        return value && typeof value === "object" ? value : {};
+      }
+      if (!storeUrl) return {};
       const res = await fetch(storeUrl, { credentials: "same-origin" });
       const data = res.ok ? await res.json() : null;
       return data && data.value && typeof data.value === "object" ? data.value : {};
@@ -162,7 +168,14 @@
   async function sendStorePatch(patch) {
     const all = { ...readPending(), ...patch };
     try { localStorage.setItem(PENDING, JSON.stringify(all)); } catch {}
-    if (storeUrl) {
+    if (MARINARA?.storage?.patch) {
+      try {
+        await MARINARA.storage.patch(all);
+        if (pendingMatches(all)) try { localStorage.removeItem(PENDING); } catch {}
+        lastStoreError = "";
+        return true;
+      } catch (e) { lastStoreError = e.message; }
+    } else if (storeUrl) {
       try {
         const res = await fetch(storeUrl, { method: "PATCH", credentials: "same-origin", headers: JSON_HEADERS, body: JSON.stringify(all) });
         if (res.ok) {
@@ -377,6 +390,25 @@ ${T} .vn-plate[data-gfx-sd] { opacity: 0 !important; }
 .vn[data-cg] .gfx-vn-cast { display: none; }
 .vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .gfx-vn-cast { display: none; }
 .vn .vn-choices, .vn .vn-choice, .vn [data-choice] { position: relative; z-index: 8; }
+.vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .vn-choices {
+  display: grid; gap: calc(var(--f, 10px) * 0.85); padding: calc(var(--f, 10px) * 1.2); isolation: isolate;
+}
+.vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .vn-choices .vn-choice,
+.vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .vn-choices > button {
+  border: calc(var(--f, 10px) * 0.28) solid var(--gfx-line) !important; border-radius: 999px !important;
+  background: color-mix(in srgb, var(--gfx-card) 92%, white) !important; color: var(--gfx-text) !important;
+  box-shadow: 0 calc(var(--f, 10px) * 0.5) 0 var(--gfx-line), inset 0 calc(var(--f, 10px) * 0.22) 0 #fff8 !important;
+  padding: calc(var(--f, 10px) * 1.05) calc(var(--f, 10px) * 2.2) !important;
+  transition: translate .14s ease, scale .14s ease, box-shadow .14s ease, background .14s ease;
+}
+.vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .vn-choices .vn-choice:hover,
+.vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .vn-choices > button:hover {
+  background: var(--gfx-pick) !important; translate: 0 calc(var(--f, 10px) * -0.18); scale: 1.015;
+}
+.vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .vn-choices .vn-choice:active,
+.vn:has(.vn-choices:not([hidden]), .vn-choice:not([hidden]), [data-choice]:not([hidden])) .vn-choices > button:active {
+  translate: 0 calc(var(--f, 10px) * 0.34); scale: .985; box-shadow: 0 calc(var(--f, 10px) * 0.14) 0 var(--gfx-line) !important;
+}
 @keyframes gfx-cast-in { from { opacity: 0; translate: -50% 8%; } to { opacity: 1; translate: -50% 0; } }
 @keyframes gfx-talk-hop { 0% { transform: translateY(0); } 40% { transform: translateY(-3%) scale(0.98, 1.03); } 100% { transform: none; } }
 
@@ -667,7 +699,8 @@ ${LB} .hm-slot-bg { opacity: 0.85; }
 .gfx-lobby .who[data-pinch] .body { animation-play-state: paused !important; cursor: grabbing; }
 .gfx-lobby[data-edit] .who { outline: 2.5px dashed var(--gfx-accent); outline-offset: 2px; border-radius: 12px; cursor: grab; }
 .gfx-lobby[data-edit] .who .body { animation: none; }
-.gfx-lobby[data-edit] { background: color-mix(in srgb, var(--gfx-ink) 25%, transparent); pointer-events: auto; }
+.gfx-lobby[data-edit] { background: color-mix(in srgb, var(--gfx-ink) 25%, transparent); pointer-events: auto; z-index: 20; }
+${LB} .hm-screen:has(.gfx-lobby[data-floor-edit]) .hm-dock { opacity: 0.14 !important; pointer-events: none !important; filter: grayscale(0.7); }
 .gfx-lobby-tools { position: absolute; left: 50%; top: 2%; translate: -50% 0; display: flex; gap: 0.5em; pointer-events: auto; z-index: 500; }
 .gfx-lobby-tools button { font-family: "Jua", "Malgun Gothic", sans-serif; font-size: calc(var(--f, 10px) * 0.95); padding: 0.3em 0.9em; cursor: pointer;
   color: var(--gfx-text); background: var(--gfx-card); border: 2px solid var(--gfx-line); border-radius: 999px; box-shadow: 0 0.18em 0 var(--gfx-line); }
@@ -688,6 +721,17 @@ ${LB} .hm-slot-bg { opacity: 0.85; }
   font: 700 calc(var(--f, 10px) * 0.82)/1 "Jua", "Malgun Gothic", sans-serif; box-shadow: 0 0.18em 0 var(--gfx-line); cursor: grab; touch-action: none; }
 .gfx-lobby-floor [data-floor-handle="vp"] { width: calc(var(--f, 10px) * 2.8); background: var(--gfx-pick); }
 .gfx-lobby-floor [data-floor-handle]:active { cursor: grabbing; scale: 1.08; }
+.gfx-floor-edge { position: absolute; height: 0; pointer-events: auto; border-top: calc(var(--f, 10px) * 0.34) solid var(--gfx-accent); touch-action: none; cursor: ns-resize; }
+.gfx-floor-edge[data-floor-line="far"] { border-top-color: var(--gfx-accent); }
+.gfx-floor-edge[data-floor-line="near"] { border-top-color: var(--gfx-pick); }
+.gfx-floor-edge .edge-mid { position: absolute; left: 50%; top: 0; translate: -50% -50%; padding: 0.28em 0.85em; white-space: nowrap; pointer-events: auto;
+  border: 2px solid var(--gfx-line); border-radius: 999px; background: var(--gfx-card); color: var(--gfx-text); box-shadow: 0 0.15em 0 var(--gfx-line);
+  font: 700 calc(var(--f, 10px) * 0.86)/1.2 "Jua", "Malgun Gothic", sans-serif; cursor: ns-resize; touch-action: none; }
+.gfx-floor-edge .edge-end { position: absolute; top: 0; width: calc(var(--f, 10px) * 2.4); aspect-ratio: 1; translate: -50% -50%; padding: 0; pointer-events: auto;
+  border: 2.5px solid var(--gfx-line); border-radius: 50%; background: var(--gfx-card); box-shadow: 0 0.15em 0 var(--gfx-line); cursor: ew-resize; touch-action: none; }
+.gfx-floor-edge .edge-end[data-side="left"] { left: 0; }
+.gfx-floor-edge .edge-end[data-side="right"] { left: 100%; }
+.gfx-floor-edge .edge-end::before { content: "↔"; color: var(--gfx-text); font-weight: 900; }
 .gfx-lobby[data-floor-edit] .who { pointer-events: none; outline-color: color-mix(in srgb, var(--gfx-line) 22%, transparent); opacity: 0.72; }
 .gfx-lobby:not([data-floor-edit]) .gfx-lobby-floor { display: none; }
 
@@ -944,9 +988,8 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
   /* ── Baked sprites ──
    * The white sticker outline used to be five stacked drop-shadow filters on every sprite, redrawn each frame
    * while the sprite moves — the cost behind a choppy lobby. Instead each SD is drawn once into a canvas with
-   * the outline and a soft under-shadow, scaled down to what the screens need, and kept as a blob: URL. */
+   * the outline and a soft under-shadow at the source resolution and kept as a blob: URL. */
   const bakedMap = new Map(); // raw url -> { url, px, py } | "pending" | "failed"
-  const BAKE_H = 760;
   let bakeQueue = Promise.resolve();
   function bakeInfo(url) {
     const b = bakedMap.get(url);
@@ -964,7 +1007,7 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
       const im = new Image();
       im.src = url;
       await im.decode();
-      const sc = Math.min(1, BAKE_H / im.naturalHeight), W = Math.round(im.naturalWidth * sc), Hh = Math.round(im.naturalHeight * sc);
+      const sc = 1, W = im.naturalWidth, Hh = im.naturalHeight;
       const r = Math.max(2, Math.round(Hh * 0.004)), pad = r * 3;
       const cw = W + pad * 2, ch = Hh + pad * 2;
       const sil = document.createElement("canvas");
@@ -1361,6 +1404,7 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
     for (let n = node; n && n !== stop; n = n.parentElement) { const t = getComputedStyle(n).transform; if (t && t.startsWith("matrix(-")) m = !m; }
     return m;
   }
+  const PINCH_RETURN_MS = 420, PINCH_FOLLOW = 0.24;
   function startPinch(img, e, cheeks, rFrac, stop, done, allowFree = true) {
     if (!img || !img.complete || !img.naturalWidth) return false;
     // No cheek set for this SD: any press in the top part (the head of a chibi) pinches right where it lands.
@@ -1399,7 +1443,7 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
     // bilinear filtering. Far from the cheek g is ~0 and the face stays exactly as drawn.
     // The gaussian is an ellipse turned along the pull: long that way (the stretch), narrow across it, so an
     // eye or mouth beside the cheek barely moves.
-    const cx = best.x * cw, cy = best.y * ch, R = rFrac * cw, sig = R * 1.3, sigQ = R * 0.85, maxLen = sig * 1.55;
+    const cx = best.x * cw, cy = best.y * ch, R = rFrac * cw, sig = R * 1.65, sigQ = R * 1.15, maxLen = sig * 1.2;
     const invP = 1 / (2 * sig * sig), invQ = 1 / (2 * sigQ * sigQ);
     const s = src.data, o = out.data;
     function sample(qx, qy, oi) {
@@ -1454,37 +1498,48 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
     render(0, 0);
     img.parentElement.append(canvas);
     img.style.visibility = "hidden";
-    let dx = 0, dy = 0, frame = 0;
+    let targetDx = 0, targetDy = 0, currentDx = 0, currentDy = 0, frame = 0;
+    let released = false, releaseX = 0, releaseY = 0, releaseAt = 0, pulled = false;
+    const animate = (now) => {
+      frame = 0;
+      if (released) {
+        const t = now - releaseAt, k = Math.exp(-t / 105) * Math.cos(t / 72);
+        currentDx = releaseX * k; currentDy = releaseY * k;
+        render(currentDx, currentDy);
+        if (t < PINCH_RETURN_MS) frame = requestAnimationFrame(animate);
+        else { canvas.remove(); img.style.visibility = ""; done && done(pulled); }
+        return;
+      }
+      currentDx += (targetDx - currentDx) * PINCH_FOLLOW;
+      currentDy += (targetDy - currentDy) * PINCH_FOLLOW;
+      render(currentDx, currentDy);
+      frame = requestAnimationFrame(animate);
+    };
     const move = (ev) => {
       ev.preventDefault();
-      dx = ((ev.clientX - e.clientX) / sc) * dpr * (mirrored ? -1 : 1);
-      dy = ((ev.clientY - e.clientY) / sc) * dpr;
-      if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(dx, dy); });
+      targetDx = ((ev.clientX - e.clientX) / sc) * dpr * (mirrored ? -1 : 1);
+      targetDy = ((ev.clientY - e.clientY) / sc) * dpr;
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
-      if (frame) cancelAnimationFrame(frame);
-      const d0x = dx, d0y = dy, pulled = Math.hypot(dx, dy) > R * 0.35, t0 = performance.now();
+      pulled = Math.hypot(targetDx, targetDy) > R * 0.35;
       if (!pulled) {
+        if (frame) cancelAnimationFrame(frame);
         canvas.remove();
         img.style.visibility = "";
         done && done(false);
         return;
       }
-      // Snaps back past the rest point and wobbles out, like dough let go.
-      const spring = (now) => {
-        const t = now - t0, k = Math.exp(-t / 150) * Math.cos(t / 62);
-        render(d0x * k, d0y * k);
-        if (t < 760) requestAnimationFrame(spring);
-        else { canvas.remove(); img.style.visibility = ""; done && done(pulled); }
-      };
-      requestAnimationFrame(spring);
+      // Release from the visible, lagged position: a short soft overshoot, not a rubber-band snap.
+      released = true; releaseX = currentDx; releaseY = currentDy; releaseAt = performance.now();
+      if (!frame) frame = requestAnimationFrame(animate);
     };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
+    frame = requestAnimationFrame(animate);
     e.preventDefault();
     return true;
   }
@@ -1549,7 +1604,7 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
 
   /* ── Home lobby ── */
   let lobbyEdit = false, floorEdit = false, lobbyPicked = "";
-  const DEFAULT_FLOOR = { vpX: 50, vpY: 42, backL: 22, backR: 78, backY: 66, frontL: 3, frontR: 97, frontY: 106 };
+  const DEFAULT_FLOOR = { vpX: 50, vpY: 42, backL: 22, backR: 78, backY: 66, frontL: 3, frontR: 97, frontY: 94 };
   function lobbyScene() {
     const w = world(), raw = w && prefs.homeScene[w.id];
     return raw || DEFAULT_FLOOR;
@@ -1809,11 +1864,18 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
     const rays = [0, 1, 2, 3].map(() => document.createElementNS(ns, "line"));
     svg.append(area, ...rays);
     guide.append(svg);
-    const specs = [
-      ["vp", "소실", "vpX", "vpY"], ["bl", "뒤L", "backL", "backY"], ["br", "뒤R", "backR", "backY"],
-      ["fl", "앞L", "frontL", "frontY"], ["fr", "앞R", "frontR", "frontY"],
-    ];
-    const handles = new Map();
+    const vp = el("button", "", "소실점");
+    vp.type = "button"; vp.setAttribute("data-floor-handle", "vp"); vp.setAttribute("data-floor-drag", "vp");
+    guide.append(vp);
+    const edges = new Map();
+    for (const [id, label] of [["far", "멀리 걷는 선"], ["near", "가까이 걷는 선"]]) {
+      const edge = el("div", "gfx-floor-edge");
+      edge.setAttribute("data-floor-line", id);
+      const left = el("button", "edge-end"); left.type = "button"; left.setAttribute("data-side", "left"); left.setAttribute("data-floor-drag", "left");
+      const mid = el("button", "edge-mid", label); mid.type = "button"; mid.setAttribute("data-floor-drag", "mid");
+      const right = el("button", "edge-end"); right.type = "button"; right.setAttribute("data-side", "right"); right.setAttribute("data-floor-drag", "right");
+      edge.append(left, mid, right); guide.append(edge); edges.set(id, edge);
+    }
     const draw = () => {
       const s = lobbyScene(), corners = [[s.backL, s.backY], [s.backR, s.backY], [s.frontR, s.frontY], [s.frontL, s.frontY]];
       area.setAttribute("points", corners.map((p) => p.join(",")).join(" "));
@@ -1821,10 +1883,10 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
         rays[i].setAttribute("x1", String(s.vpX)); rays[i].setAttribute("y1", String(s.vpY));
         rays[i].setAttribute("x2", String(p[0])); rays[i].setAttribute("y2", String(p[1]));
       });
-      for (const [id, , xk, yk] of specs) {
-        const h = handles.get(id);
-        h.style.left = s[xk] + "%"; h.style.top = s[yk] + "%";
-      }
+      vp.style.left = s.vpX + "%"; vp.style.top = s.vpY + "%";
+      const far = edges.get("far"), near = edges.get("near");
+      far.style.left = s.backL + "%"; far.style.width = (s.backR - s.backL) + "%"; far.style.top = s.backY + "%";
+      near.style.left = s.frontL + "%"; near.style.width = (s.frontR - s.frontL) + "%"; near.style.top = s.frontY + "%";
       for (const who of lobby.querySelectorAll(":scope > .who")) {
         const name = who.getAttribute("data-name"), st = roam.get(name);
         if (!st) continue;
@@ -1833,23 +1895,22 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
         placeWho(who, st);
       }
     };
-    for (const [id, label, xk, yk] of specs) {
-      const h = el("button", "", label);
-      h.type = "button";
-      h.setAttribute("data-floor-handle", id);
-      handles.set(id, h);
+    for (const h of guide.querySelectorAll("[data-floor-drag]")) {
       on(h, "pointerdown", (e) => {
         e.preventDefault(); e.stopPropagation(); h.setPointerCapture(e.pointerId);
+        const edge = h.closest("[data-floor-line]"), line = edge?.getAttribute("data-floor-line") || "", mode = h.getAttribute("data-floor-drag");
         const move = (ev) => {
           const box = lobby.getBoundingClientRect();
           let x = clamp(((ev.clientX - box.left) / box.width) * 100, 0, 100);
-          let y = clamp(((ev.clientY - box.top) / box.height) * 100, 0, 110);
+          let y = clamp(((ev.clientY - box.top) / box.height) * 100, 0, 96);
           const s = lobbyScene(), patch = {};
-          if (id === "vp") { patch.vpX = x; patch.vpY = clamp(y, 0, s.backY - 4); }
-          else if (id === "bl") { patch.backL = clamp(x, 0, s.backR - 6); patch.backY = clamp(y, 42, s.frontY - 8); }
-          else if (id === "br") { patch.backR = clamp(x, s.backL + 6, 100); patch.backY = clamp(y, 42, s.frontY - 8); }
-          else if (id === "fl") { patch.frontL = clamp(x, 0, s.frontR - 6); patch.frontY = clamp(y, s.backY + 8, 110); }
-          else { patch.frontR = clamp(x, s.frontL + 6, 100); patch.frontY = clamp(y, s.backY + 8, 110); }
+          if (mode === "vp") { patch.vpX = x; patch.vpY = clamp(y, 0, s.backY - 4); }
+          else if (mode === "mid" && line === "far") patch.backY = clamp(y, 42, s.frontY - 8);
+          else if (mode === "mid" && line === "near") patch.frontY = clamp(y, s.backY + 8, 96);
+          else if (mode === "left" && line === "far") patch.backL = clamp(x, 0, s.backR - 6);
+          else if (mode === "right" && line === "far") patch.backR = clamp(x, s.backL + 6, 100);
+          else if (mode === "left" && line === "near") patch.frontL = clamp(x, 0, s.frontR - 6);
+          else if (mode === "right" && line === "near") patch.frontR = clamp(x, s.frontL + 6, 100);
           setLobbyScene(patch);
           draw();
         };
@@ -1862,7 +1923,6 @@ ${T} [data-screen="reveal"] .rv-foot { background: color-mix(in srgb, var(--gfx-
         h.addEventListener("pointermove", move); h.addEventListener("pointerup", up);
         h.addEventListener("pointercancel", up); h.addEventListener("lostpointercapture", up);
       });
-      guide.append(h);
     }
     draw();
     return guide;
